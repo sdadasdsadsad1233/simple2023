@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Hunter Assassin Puzzle</title>
+  <style>
+    html, body { margin: 0; overflow: hidden; font-family: sans-serif; }
+    canvas { display: block; background: #111; }
+    #ui, #shop, #inventory, #skinSelect, #joystick {
+      position: absolute;
+      color: white;
+      z-index: 10;
+      font-size: 16px;
+    }
+    #ui { top: 10px; left: 10px; }
+    #shop, #inventory, #skinSelect {
+      background: rgba(0,0,0,0.7); padding: 10px; bottom: 10px;
+    }
+    #shop { left: 10px; }
+    #inventory { right: 10px; }
+    #skinSelect { left: 50%; transform: translateX(-50%); top: 10px; }
+    button { margin: 4px 0; }
+    #joystick {
+      bottom: 20px; left: 50%; transform: translateX(-50%);
+    }
+    .stick {
+      width: 80px; height: 80px; background: rgba(255,255,255,0.1); border-radius: 50%; position: relative;
+    }
+    .stick:after {
+      content: ""; width: 40px; height: 40px; background: rgba(255,255,255,0.3); border-radius: 50%; position: absolute; top: 20px; left: 20px;
+    }
+  </style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="ui">💰 <span id="gold">0</span> | Level: <span id="level">1</span> | Objective: <span id="objective">Steal Artifact</span></div>
+<div id="shop">
+  <b>Shop</b><br>
+  <button onclick="buy('silentKill')">Silent Kill (50G)</button><br>
+  <button onclick="buy('dash')">Dash (100G)</button><br>
+  <button onclick="buy('disguise')">Disguise (200G)</button><br>
+  <button onclick="buy('invisibility')">Invisibility (250G)</button><br>
+  <button onclick="save()">Save</button>
+</div>
+<div id="inventory">
+  <b>Inventory</b><br>
+  <div id="inv"></div>
+</div>
+<div id="skinSelect">
+  <b>Skins:</b>
+  <select onchange="changeSkin(this.value)">
+    <option value="lime">Default</option>
+    <option value="cyan">Ghost</option>
+    <option value="yellow">Agent</option>
+    <option value="pink">Ninja</option>
+  </select>
+</div>
+<div id="joystick">
+  <div class="stick" id="joystickBase"></div>
+</div>
+<audio id="killSound" src="https://cdn.pixabay.com/download/audio/2022/03/15/audio_4d3d5b36f3.mp3?filename=knife-slice-1-4763.mp3"></audio>
+<script>
+const canvas = document.getElementById("game"), ctx = canvas.getContext("2d");
+canvas.width = innerWidth; canvas.height = innerHeight;
+let gold = 0, level = 1, player, enemies = [], bodies = [], powerups = {}, inventory = [], objectiveDone = false, traps = [], loot = [], skin = "lime";
+let canDash = true, dashCooldown = 1000;
+const killSound = document.getElementById("killSound");
+
+function newLevel() {
+  objectiveDone = false;
+  player = { x: 100, y: 100, r: 20, speed: 3, dx: 0, dy: 0 };
+  enemies = [], bodies = [], traps = [], loot = [];
+  for (let i = 0; i < level + 1; i++) enemies.push({ x: Math.random()*canvas.width, y: Math.random()*canvas.height, angle: Math.random()*6.28, patrolSpeed: 1.5, vision: 120 });
+  for (let i = 0; i < level; i++) traps.push({ x: Math.random()*canvas.width, y: Math.random()*canvas.height });
+  loot.push({ x: canvas.width - 100, y: canvas.height - 100 });
+  document.getElementById("level").innerText = level;
+}
+
+function drawPlayer() {
+  ctx.fillStyle = skin;
+  ctx.beginPath(); ctx.arc(player.x, player.y, player.r, 0, Math.PI*2); ctx.fill();
+}
+
+function drawEnemies() {
+  for (let e of enemies) {
+    ctx.fillStyle = "red";
+    ctx.beginPath(); ctx.arc(e.x, e.y, 20, 0, Math.PI*2); ctx.fill();
+    ctx.fillStyle = "rgba(255,0,0,0.2)";
+    ctx.beginPath(); ctx.moveTo(e.x, e.y);
+    ctx.arc(e.x, e.y, e.vision, e.angle - 0.5, e.angle + 0.5); ctx.fill();
+  }
+}
+
+function drawBodies() {
+  ctx.fillStyle = "gray";
+  for (let b of bodies) { ctx.beginPath(); ctx.arc(b.x, b.y, 10, 0, Math.PI*2); ctx.fill(); }
+}
+
+function drawTraps() {
+  ctx.fillStyle = "orange";
+  for (let t of traps) { ctx.beginPath(); ctx.rect(t.x-5, t.y-5, 10, 10); ctx.fill(); }
+}
+
+function drawLoot() {
+  ctx.fillStyle = "gold";
+  for (let l of loot) { ctx.beginPath(); ctx.arc(l.x, l.y, 10, 0, Math.PI*2); ctx.fill(); }
+}
+
+function updateEnemies() {
+  for (let e of enemies) {
+    e.x += Math.cos(e.angle) * e.patrolSpeed;
+    e.y += Math.sin(e.angle) * e.patrolSpeed;
+    if (e.x < 0 || e.x > canvas.width || e.y < 0 || e.y > canvas.height) e.angle += Math.PI;
+    let dx = player.x - e.x, dy = player.y - e.y, dist = Math.hypot(dx, dy), angle = Math.atan2(dy, dx);
+    if (dist < e.vision && Math.abs(e.angle - angle) < 0.5 && !powerups.invisibility && !powerups.disguise) {
+      alert("Spotted! Game Over."); location.reload();
+    }
+  }
+}
+
+function tryKill() {
+  for (let i = enemies.length-1; i >= 0; i--) {
+    let e = enemies[i];
+    if (Math.hypot(player.x - e.x, player.y - e.y) < 30) {
+      enemies.splice(i, 1); bodies.push({ x: e.x, y: e.y }); gold += 10; killSound.play();
+    }
+  }
+  document.getElementById("gold").innerText = gold;
+}
+
+function checkObjective() {
+  for (let i = loot.length - 1; i >= 0; i--) {
+    let l = loot[i];
+    if (Math.hypot(player.x - l.x, player.y - l.y) < 30) {
+      loot.splice(i, 1); gold += 50; objectiveDone = true; level++; setTimeout(newLevel, 2000);
+    }
+  }
+}
+
+function updateTraps() {
+  for (let t of traps) {
+    if (Math.hypot(player.x - t.x, player.y - t.y) < 20) {
+      alert("You triggered a trap! Game Over."); location.reload();
+    }
+  }
+}
+
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = `hsl(${level*20}, 30%, 10%)`; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  drawBodies(); drawEnemies(); drawTraps(); drawLoot(); drawPlayer();
+  checkObjective(); updateTraps();
+}
+
+function update() {
+  player.x += player.dx * player.speed;
+  player.y += player.dy * player.speed;
+  updateEnemies(); tryKill();
+}
+
+function gameLoop() { update(); draw(); requestAnimationFrame(gameLoop); }
+
+function buy(item) {
+  const costs = { silentKill: 50, dash: 100, disguise: 200, invisibility: 250 };
+  if (gold >= costs[item]) {
+    gold -= costs[item]; powerups[item] = true; inventory.push(item); updateInventory();
+  }
+}
+
+function updateInventory() {
+  document.getElementById("inv").innerText = inventory.join(", ");
+}
+
+function save() {
+  localStorage.setItem("hunter_save", JSON.stringify({ gold, level, powerups, inventory, skin }));
+  alert("Game Saved");
+}
+
+function load() {
+  const data = localStorage.getItem("hunter_save");
+  if (data) {
+    let s = JSON.parse(data);
+    gold = s.gold; level = s.level; powerups = s.powerups; inventory = s.inventory; skin = s.skin;
+    updateInventory(); newLevel();
+  }
+}
+
+function changeSkin(val) { skin = val; }
+
+let keys = {};
+addEventListener("keydown", e => {
+  keys[e.key] = true;
+  if (e.key === "Shift" && powerups.dash && canDash) {
+    canDash = false;
+    player.x += player.dx * 50;
+    player.y += player.dy * 50;
+    setTimeout(() => canDash = true, dashCooldown);
+  }
+});
+
+addEventListener("keyup", e => keys[e.key] = false);
+
+setInterval(() => {
+  player.dx = (keys["ArrowRight"] || keys["d"] ? 1 : 0) - (keys["ArrowLeft"] || keys["a"] ? 1 : 0);
+  player.dy = (keys["ArrowDown"] || keys["s"] ? 1 : 0) - (keys["ArrowUp"] || keys["w"] ? 1 : 0);
+}, 16);
+
+load();
+newLevel();
+gameLoop();
+</script>
+</body>
+</html>
